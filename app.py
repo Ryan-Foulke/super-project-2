@@ -6,51 +6,80 @@ from pywebio.output import *
 import argparse
 from pywebio import start_server
 
-import pickle
+import pandas as pd
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 import numpy as np
-model = pickle.load(open('regression_rf.pkl', 'rb'))
-app = Flask(__name__)
+
+gsheet_name = 'SUPER Project (All Data)'
+json_credentials = 'super-project-324706-3389a6fde047.json'
 
 
-def predict():
-    Year = input("Enter the Model Year：", type=NUMBER)
-    Year = 2021 - Year
-    Present_Price = input("Enter the Present Price(in LAKHS)", type=FLOAT)
-    Kms_Driven = input("Enter the distance it has travelled(in KMS)：", type=FLOAT)
-    Kms_Driven2 = np.log(Kms_Driven)
-    Owner = input("Enter the number of owners who have previously owned it(0 or 1 or 2 or 3)", type=NUMBER)
-    Fuel_Type = select('What is the Fuel Type', ['Petrol', 'Diesel','CNG'])
-    if (Fuel_Type == 'Petrol'):
-        Fuel_Type = 239
+def open_spreadsheet(sheet_name, json_credentials):
+    # define the scope
+    scope = ['https://spreadsheets.google.com/feeds',
+             'https://www.googleapis.com/auth/drive']
+    # add credentials to the account
+    creds = ServiceAccountCredentials.from_json_keyfile_name(
+        json_credentials, scope)
+    # authorize the clientsheet
+    client = gspread.authorize(creds)
+    # get the instance of the Spreadsheet
+    return(client.open(sheet_name))
 
-    elif (Fuel_Type == 'Diesel'):
-        Fuel_Type = 60
+    # Returns sheet data in a pandas df
 
-    else:
-        Fuel_Type = 2
-    Seller_Type = select('Are you a dealer or an individual', ['Dealer', 'Individual'])
-    if (Seller_Type == 'Individual'):
-        Seller_Type = 106
 
-    else:
-        Seller_Type = 195
-    Transmission = select('Transmission Type', ['Manual Car', 'Automatic Car'])
-    if (Transmission == 'Manual Car'):
-        Transmission = 261
-    else:
-        Transmission = 40
+def get_sheet_data(spreadsheet, sheet_index):
+    sheet = spreadsheet.get_worksheet(sheet_index)
+    return(pd.DataFrame(sheet.get_all_values()[1:], columns=sheet.get_all_values()[0]))
 
-    prediction = model.predict([[Present_Price, Kms_Driven2, Fuel_Type, Seller_Type, Transmission, Owner, Year]])
-    output = round(prediction[0], 2)
 
-    if output < 0:
-        put_text("Sorry You can't sell this Car")
+def get_column_data(spreadsheet, sheet_index, column_name):
+    sheet_data = spreadsheet.get_worksheet(sheet_index)
+    sheet = pd.DataFrame(sheet.get_all_values()[
+        1:], columns=sheet.get_all_values()[0])
+    return(sheet[column_name])
 
-    else:
-        put_text('You can sell this Car at price:',output)
 
-app.add_url_rule('/tool', 'webio_view', webio_view(predict),
-            methods=['GET', 'POST', 'OPTIONS'])
+def get_user_data():
+    # Intro
+    put_markdown(
+        '# Stanford Behavior Design - Emotion Regulation Tool!')
+
+    # Collecting User Data
+    user_data = input_group("The following questions will help us match you with the best technique.", [
+        # Step 1: Ask about the environment the person is in (e.g. Where are you and who is around)
+        select("Which of the following best describes your current situation?", [
+            'Waking up', 'At work', 'At home alone', 'At home with family or friends', 'About to go to bed'], name='environment', required=True),
+        # Step 2: Ask about the current emotion the person is feeling (e.g. unmotivated, bored, sad, etc.)
+        select("Which of the following best describes your emotional state?", [
+            'Tired and unmotivated', 'Overwhelmed', 'Bored', 'Just "normal"', 'Sad', 'Stressed', 'Restless'], name='emotion', required=True)
+    ])
+
+    return(user_data["environment"], user_data["emotion"])
+
+
+def get_random_technique(environment, emotion):
+    spreadsheet = open_spreadsheet(gsheet_name, json_credentials)
+    techniques = get_sheet_data(spreadsheet, 6)
+    suggested_technique = techniques[techniques.Environment.eq(
+        environment)][techniques.Emotion.eq(emotion)].Technique.values[0]
+    return(suggested_technique)
+
+
+def display_technique(environment, emotion, technique):
+    put_markdown('## You are ' +
+                 environment.lower() + " and are feeling " + emotion.lower() + '.')
+    put_markdown(
+        '### Here is a technique that other people use to upregualte positive emotions when they are in your situation:')
+    put_markdown(technique)
+
+
+def main():
+    environment, emotion = get_user_data()
+    technique = get_random_technique(environment, emotion)
+    display_technique(environment, emotion, technique)
 
 
 if __name__ == '__main__':
@@ -58,10 +87,4 @@ if __name__ == '__main__':
     parser.add_argument("-p", "--port", type=int, default=8080)
     args = parser.parse_args()
 
-    start_server(predict, port=args.port)
-#if __name__ == '__main__':
-    #predict()
-
-#app.run(host='localhost', port=80)
-
-#visit http://localhost/tool to open the PyWebIO application.
+    start_server(main, port=args.port)
